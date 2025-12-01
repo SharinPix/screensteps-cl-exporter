@@ -9,12 +9,42 @@ import os, fnmatch
 import re
 import shutil
 from urllib.parse import urlparse
+import html2text
+
+def html_to_markdown(html_content):
+    if not html_content:
+        return ''
+    
+    h = html2text.HTML2Text()
+    h.body_width = 0  # Don't wrap lines
+    h.ignore_links = False
+    h.ignore_images = False
+    h.ignore_emphasis = False
+    h.skip_internal_links = False
+    h.inline_links = True  # Use inline link style [text](url)
+    h.protect_links = True  # Protect links from line breaks
+    h.wrap_links = False  # Don't wrap long links
+    h.unicode_snob = True  # Use unicode characters
+    h.mark_code = True  # Mark code blocks properly
+    h.default_image_alt = ''  # Default alt text for images without alt
+    
+    markdown = h.handle(html_content)
+    
+    # Clean up the markdown
+    # Remove excessive blank lines
+    import re
+    markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+    
+    return markdown.strip()
 
 # globals
 article_file_indicator = '@article.*'
 manual_file_indicator = '@toc.*'
 image_folder_indicator = '@images'
 attach_folder_indicator = '@attachments'
+
+# Preferred file extensions (prioritize .md over .html)
+preferred_extensions = ['.md', '.html', '.json']
 
 # these are the handlebars you can use in an article file
 article_handlebars = [
@@ -46,6 +76,7 @@ def print_help():
     [-a <article_id>]
     [-M <manual_file_name]
     [-i object_identifier]
+    [-g] (--group-by-topic)
 
     Explanations:
     -n This is used for the name of the account (http://<account_name>.screenstepslive.com)
@@ -57,7 +88,8 @@ def print_help():
     -m If you'd like to only download one manual, specify the ID here (optional)
     -a If you'd like to only download one article, specify the ID here (optional)
     -M Pass in a specific name to use for the manual file. Must pass in the -m parameter.
-    -i Specifies how the site, manual, and article files should be named. By default the "id" from ScreenSteps is used. You can set this to "title" or "title_id". "title_id" will use the name with " [ID]" appended to the end.
+    -i Specifies how the site, manual, and article files should be named. By default the "title" is used. You can set this to "id" or "title_id". "title_id" will use the name with " [ID]" appended to the end.
+    -g Group articles by their topic/chapter in separate folders (optional)
 
     Examples:
     run -n customerknowledge -u mikey -p mypassword -s 15226
@@ -175,9 +207,10 @@ def main(argv):
     manual_id = ''#m / manual
     article_id = ''#a / article
     manual_file_name = ''#M / manual_file_name
-    object_identifier = 'id'#i / object_identifier
+    object_identifier = 'title'#i / object_identifier - default to 'title' for name-based exports
+    group_by_topic = False#g / group articles by topic/chapter
     try:
-        opts, args = getopt.getopt(argv,"hn:u:p:t:o:s:m:a:M:i:",["site_name=","user_id=","password=","template_folder=","output_folder=","site_id=","manual_id=","article_id=","manual_file_name=","object_identifier="])
+        opts, args = getopt.getopt(argv,"hn:u:p:t:o:s:m:a:M:i:g",["site_name=","user_id=","password=","template_folder=","output_folder=","site_id=","manual_id=","article_id=","manual_file_name=","object_identifier=","group-by-topic"])
     except getopt.GetoptError:
         print('use "run.py -h" for help')
         sys.exit(2)
@@ -206,6 +239,8 @@ def main(argv):
                 manual_file_name = arg
         elif opt in ("-i", "--object_identifier"):
             object_identifier = arg
+        elif opt in ("-g", "--group-by-topic"):
+            group_by_topic = True
 
 
     # check if required attributes exist
@@ -225,7 +260,7 @@ def main(argv):
         is_manual_files = False
         is_image_folder = False
         is_attach_folder = False
-        print("Warn: Template folder not specified.  Will output HTML files only.")
+        print("Warn: Template folder not specified.  Will output Markdown files only.")
     else:
         # check if template folder exists
         if os.path.exists(template_folder):
@@ -422,6 +457,20 @@ def main(argv):
                         print(">>>> Processing chapter: " + _print(chapter['title']))
                         # print(">>>> " + _print(chapter))
 
+                        # Create chapter folder if grouping by topic
+                        if group_by_topic:
+                            if object_identifier == "title_id":
+                                chapter_folder_name = prepare_for_filename(chapter['title']) + " [" + this_chapter_id + "]"
+                            elif object_identifier == "title":
+                                chapter_folder_name = prepare_for_filename(chapter['title'])
+                            else:
+                                chapter_folder_name = this_chapter_id
+                            
+                            chapter_folder = os.path.join(site_folder, chapter_folder_name)
+                            make_dir(chapter_folder)
+                        else:
+                            chapter_folder = site_folder
+
                         chapter['articles'] = []
 
                         # pre-article replaces on _decode(manual_files_ref[path][1])
@@ -449,17 +498,22 @@ def main(argv):
                                 else:
                                     this_article_identifier = this_article_id
 
+                                # Determine base folder for articles (chapter folder if grouping by topic, otherwise site folder)
+                                base_folder = chapter_folder if group_by_topic else site_folder
+                                
                                 if is_article_folder:
-                                    article_folder = os.path.join(site_folder, find_relative_path(at_article_folder,template_folder), this_article_identifier)
+                                    article_folder = os.path.join(base_folder, find_relative_path(at_article_folder,template_folder), this_article_identifier)
                                     copy_and_overwrite(at_article_folder, article_folder)
                                 else:
-                                    # write html to a file if no templates
-                                    article_folder = site_folder
+                                    # write markdown to a file if no templates
+                                    article_folder = base_folder
 
                                 # Add to list of article ids and titles
                                 chapter["articles"].append( {'id': this_article['article']['id'], 'title': this_article_identifier} )
 
+                                # Convert HTML to Markdown
                                 article_html = this_article['article']['html_body']
+                                article_markdown = html_to_markdown(article_html)
 
                                 # loop through attached files
                                 this_articles_files = []
@@ -470,7 +524,7 @@ def main(argv):
                                         download_ext = os.path.splitext(urlparse(content_block['url']).path)[1]
                                         if content_block['type'] == 'AttachmentContent': # attachment
                                             if is_attach_folder:
-                                                files_folder = os.path.join(site_folder,at_attach_folder)
+                                                files_folder = os.path.join(base_folder,at_attach_folder)
                                                 short_files_folder = at_attach_folder
                                                 if '@article' in files_folder:
                                                     files_folder = files_folder.replace("@article", this_article_identifier)
@@ -481,7 +535,7 @@ def main(argv):
                                                 make_dir(files_folder)
                                         else: # image
                                             if is_image_folder:
-                                                files_folder = os.path.join(site_folder,at_images_folder)
+                                                files_folder = os.path.join(base_folder,at_images_folder)
                                                 short_files_folder = at_images_folder
                                                 if '@article' in files_folder:
                                                     files_folder = files_folder.replace("@article", this_article_identifier)
@@ -508,8 +562,8 @@ def main(argv):
                                             temp_filename = os.path.join(article_relative_path,temp_filename)
                                             back_dir = '../' * len(split_path(article_relative_path))
 
-                                        # find and replace {{html}}
-                                        temp_towrite = temp_html.replace("""{{html}}""",article_html)
+                                        # find and replace {{html}} with markdown content
+                                        temp_towrite = temp_html.replace("""{{html}}""",article_markdown)
                                         temp_towrite = temp_towrite.replace("""{{json}}""",json.dumps(this_article, sort_keys=True, indent=2, separators=(',', ': ')))
 
                                         # find and replace all the other handlebars specified
@@ -526,13 +580,13 @@ def main(argv):
                                             temp_towrite = temp_towrite.replace(thumbnail_url,(back_dir + this_articles_file[1].replace("\\", "/"))) # Fix windows paths
 
                                         # write file
-                                        write_file(site_folder, temp_filename, temp_towrite)
+                                        write_file(base_folder, temp_filename, temp_towrite)
                                         article_files_paths.append(temp_filename)
                                 else:
                                     for this_articles_file in this_articles_files:
-                                        article_html = article_html.replace(this_articles_file[0],this_articles_file[1].replace("\\", "/")) # Fix windows paths
-                                    write_file(article_folder, (this_article_identifier + '.html'), article_html)
-                                    article_files_paths.append((this_article_identifier + '.html'))
+                                        article_markdown = article_markdown.replace(this_articles_file[0],this_articles_file[1].replace("\\", "/")) # Fix windows paths
+                                    write_file(article_folder, (this_article_identifier + '.md'), article_markdown)
+                                    article_files_paths.append((this_article_identifier + '.md'))
 
                                 # article replaces on _decode(manual_files_ref[path][2])
                                 if is_manual_files: # are there templates?

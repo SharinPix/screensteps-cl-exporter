@@ -95,6 +95,27 @@ ss_exporter -n myaccount -u jack -p apassword -t my_template_folder -o output_fo
 
 ## Installation
 
+**Note: This version has been modified to export as Markdown by default instead of HTML.**
+
+### Quick Start
+
+1. Ensure Python 3 is installed on your system
+2. Install dependencies:
+   ```bash
+   pip install requests html2text
+   ```
+3. Run the exporter:
+   ```bash
+   python ss_exporter.py -n SCREENSTEPS_ACCOUNT_NAME -u USERNAME -p API_TOKEN -t samples/markdown_template -o output_folder -s SITE_ID
+   ```
+
+### What's New
+
+- **Markdown Export**: Articles are now exported as `.md` files with clean Markdown formatting
+- **Title-based Naming**: Uses document titles for folder/file names instead of IDs by default
+- **HTML to Markdown Conversion**: Automatically converts ScreenSteps HTML content to Markdown
+- **Markdown Templates**: New `samples/markdown_template/` folder with Markdown export templates
+
 To build from python (".py") file into single file executable, follow these steps:
 
 1. Ensure the python file runs on your system (and all dependencies are installed), with something like this:
