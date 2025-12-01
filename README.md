@@ -13,6 +13,7 @@ ss_exporter -n <account_name> -u <user_id> -p <token_password>
 [-a <article_id>]
 [-M <manual_file_name>]
 [-i object_identifier]
+[-g] (group by topic)
 ```
 
 ## Explanations:
@@ -28,6 +29,7 @@ ss_exporter -n <account_name> -u <user_id> -p <token_password>
 -a If you'd like to only download one article, specify the ID here (optional)
 -M By default a manual file uses the manual id for the filename. This parameter allows you to specify a specific name for the manual file. Requires that -m be passed in as well.
 -i Specifies how the site, manual, and article files should be named. By default the "id" from ScreenSteps is used. You can set this to "title" or "title_id". "name_id" will use the name with " [ID]" appended to the end.
+-g Group articles by their topic/chapter in separate folders (optional)
 ```
 
 ## Examples:
