@@ -13,6 +13,7 @@ ss_exporter -n <account_name> -u <user_id> -p <token_password>
 [-a <article_id>]
 [-M <manual_file_name>]
 [-i object_identifier]
+[-g] (group by topic)
 ```
 
 ## Explanations:
@@ -28,6 +29,7 @@ ss_exporter -n <account_name> -u <user_id> -p <token_password>
 -a If you'd like to only download one article, specify the ID here (optional)
 -M By default a manual file uses the manual id for the filename. This parameter allows you to specify a specific name for the manual file. Requires that -m be passed in as well.
 -i Specifies how the site, manual, and article files should be named. By default the "id" from ScreenSteps is used. You can set this to "title" or "title_id". "name_id" will use the name with " [ID]" appended to the end.
+-g Group articles by their topic/chapter in separate folders (optional)
 ```
 
 ## Examples:
@@ -94,6 +96,27 @@ ss_exporter -n myaccount -u jack -p apassword -t my_template_folder -o output_fo
   - 21234.html
 
 ## Installation
+
+**Note: This version has been modified to export as Markdown by default instead of HTML.**
+
+### Quick Start
+
+1. Ensure Python 3 is installed on your system
+2. Install dependencies:
+   ```bash
+   pip install requests html2text
+   ```
+3. Run the exporter:
+   ```bash
+   python ss_exporter.py -n SCREENSTEPS_ACCOUNT_NAME -u USERNAME -p API_TOKEN -t samples/markdown_template -o output_folder -s SITE_ID
+   ```
+
+### What's New
+
+- **Markdown Export**: Articles are now exported as `.md` files with clean Markdown formatting
+- **Title-based Naming**: Uses document titles for folder/file names instead of IDs by default
+- **HTML to Markdown Conversion**: Automatically converts ScreenSteps HTML content to Markdown
+- **Markdown Templates**: New `samples/markdown_template/` folder with Markdown export templates
 
 To build from python (".py") file into single file executable, follow these steps:
 
