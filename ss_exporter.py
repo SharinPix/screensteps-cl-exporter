@@ -16,22 +16,20 @@ def html_to_markdown(html_content):
         return ''
     
     h = html2text.HTML2Text()
-    h.body_width = 0  # Don't wrap lines
+    h.body_width = 0
     h.ignore_links = False
     h.ignore_images = False
     h.ignore_emphasis = False
     h.skip_internal_links = False
-    h.inline_links = True  # Use inline link style [text](url)
-    h.protect_links = True  # Protect links from line breaks
-    h.wrap_links = False  # Don't wrap long links
-    h.unicode_snob = True  # Use unicode characters
-    h.mark_code = True  # Mark code blocks properly
-    h.default_image_alt = ''  # Default alt text for images without alt
+    h.inline_links = True
+    h.protect_links = True
+    h.wrap_links = False
+    h.unicode_snob = True
+    h.mark_code = True
+    h.default_image_alt = ''
     
     markdown = h.handle(html_content)
     
-    # Clean up the markdown
-    # Remove excessive blank lines
     import re
     markdown = re.sub(r'\n{3,}', '\n\n', markdown)
     
@@ -42,9 +40,6 @@ article_file_indicator = '@article.*'
 manual_file_indicator = '@toc.*'
 image_folder_indicator = '@images'
 attach_folder_indicator = '@attachments'
-
-# Preferred file extensions (prioritize .md over .html)
-preferred_extensions = ['.md', '.html', '.json']
 
 # these are the handlebars you can use in an article file
 article_handlebars = [
