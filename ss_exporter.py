@@ -38,6 +38,7 @@ def html_to_markdown(html_content):
 # globals
 article_file_indicator = '@article.*'
 manual_file_indicator = '@toc.*'
+summary_file_indicator = 'SUMMARY.*'
 image_folder_indicator = '@images'
 attach_folder_indicator = '@attachments'
 
@@ -322,12 +323,18 @@ def main(argv):
 
             # now let's check if theres a manual file
             at_manual_file = find_file(manual_file_indicator,template_folder)
+            at_summary_file = find_file(summary_file_indicator,template_folder)
 
-            if at_manual_file == []:
-                print("Warn: No @toc file found.")
+            if at_manual_file == [] and at_summary_file == []:
+                print("Warn: No @toc or SUMMARY file found.")
                 is_manual_files = False
             else:
-                print("Info: @toc file(s) found.")
+                # Prefer SUMMARY file if both exist
+                if at_summary_file != []:
+                    print("Info: SUMMARY file(s) found (GitBook format).")
+                    at_manual_file = at_summary_file
+                else:
+                    print("Info: @toc file(s) found.")
                 is_manual_files = True
 
                 # read in template data
@@ -496,7 +503,11 @@ def main(argv):
                                 # Determine base folder for articles (chapter folder if grouping by topic, otherwise site folder)
                                 base_folder = chapter_folder if group_by_topic else site_folder
                                 
-                                if is_article_folder:
+                                # For GitBook structure with -g flag, don't create article subfolders
+                                if group_by_topic:
+                                    # Articles go directly in chapter folder for GitBook
+                                    article_folder = base_folder
+                                elif is_article_folder:
                                     article_folder = os.path.join(base_folder, find_relative_path(at_article_folder,template_folder), this_article_identifier)
                                     copy_and_overwrite(at_article_folder, article_folder)
                                 else:
@@ -518,7 +529,12 @@ def main(argv):
                                         # what type of file is it?
                                         download_ext = os.path.splitext(urlparse(content_block['url']).path)[1]
                                         if content_block['type'] == 'AttachmentContent': # attachment
-                                            if is_attach_folder:
+                                            if group_by_topic:
+                                                # GitBook: attachments at chapter level in .gitbook/assets
+                                                files_folder = os.path.join(base_folder, '.gitbook', 'assets')
+                                                short_files_folder = '.gitbook/assets'
+                                                make_dir(files_folder)
+                                            elif is_attach_folder:
                                                 files_folder = os.path.join(base_folder,at_attach_folder)
                                                 short_files_folder = at_attach_folder
                                                 if '@article' in files_folder:
@@ -529,7 +545,12 @@ def main(argv):
                                                 short_files_folder = 'attachments'
                                                 make_dir(files_folder)
                                         else: # image
-                                            if is_image_folder:
+                                            if group_by_topic:
+                                                # GitBook: images at chapter level in .gitbook/assets
+                                                files_folder = os.path.join(base_folder, '.gitbook', 'assets')
+                                                short_files_folder = '.gitbook/assets'
+                                                make_dir(files_folder)
+                                            elif is_image_folder:
                                                 files_folder = os.path.join(base_folder,at_images_folder)
                                                 short_files_folder = at_images_folder
                                                 if '@article' in files_folder:
@@ -552,7 +573,13 @@ def main(argv):
                                         back_dir = ''
                                         article_relative_path = find_relative_path(path,template_folder)
                                         temp_filename = this_article_identifier + os.path.splitext(path)[1]
-                                        if article_relative_path != '':
+                                        
+                                        # For GitBook with -g flag, articles go directly in chapter folder
+                                        if group_by_topic:
+                                            # No subdirectory for articles in GitBook structure
+                                            temp_filename = this_article_identifier + os.path.splitext(path)[1]
+                                            back_dir = ''
+                                        elif article_relative_path != '':
                                             article_relative_path = article_relative_path.replace("@article", this_article_identifier)
                                             temp_filename = os.path.join(article_relative_path,temp_filename)
                                             back_dir = '../' * len(split_path(article_relative_path))
@@ -631,6 +658,7 @@ def main(argv):
                 try:
                     remove_found_files(find_file(article_file_indicator,site_folder))
                     remove_found_files(find_file(manual_file_indicator,site_folder))
+                    remove_found_files(find_file(summary_file_indicator,site_folder))
                     remove_found_files(find_file(image_folder_indicator,site_folder))
                     remove_found_files(find_file(attach_folder_indicator,site_folder))
                     remove_directories(find_dirs("@article", site_folder))
