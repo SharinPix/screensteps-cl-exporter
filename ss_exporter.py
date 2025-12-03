@@ -17,21 +17,21 @@ def html_to_markdown(html_content):
     
     h = html2text.HTML2Text()
     h.body_width = 0
-    h.ignore_links = False
-    h.ignore_images = False
-    h.ignore_emphasis = False
-    h.skip_internal_links = False
-    h.inline_links = True
-    h.protect_links = True
-    h.wrap_links = False
-    h.unicode_snob = True
-    h.mark_code = True
-    h.default_image_alt = ''
     
     markdown = h.handle(html_content)
     
     import re
     markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+    
+    # Convert [code] tags to proper markdown code blocks
+    markdown = re.sub(r'\[code\]\s*\n', '```\n', markdown)
+    markdown = re.sub(r'\n\s*\[/code\]', '\n```', markdown)
+    
+    # Remove "Click to copy" text that follows code blocks
+    markdown = re.sub(r'```\s*\n\s*Click to copy\s*\n', '```\n\n', markdown)
+    
+    # Remove link wrapping around images: [ ![alt](image.png) ](<image.png>) -> ![alt](image.png)
+    markdown = re.sub(r'\[\s*(!\\[.*?\\]\\(.*?\\))\s*\\]\\(<.*?>\\)', r'\1', markdown)
     
     return markdown.strip()
 
@@ -187,7 +187,12 @@ def _decode(var):
     return str(var)
 
 def prepare_for_filename(string):
-        return "".join([c for c in string if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+        # Convert to lowercase and replace spaces/special chars with hyphens (kebab-case)
+        # Remove special characters, keep only alphanumeric and spaces
+        cleaned = "".join([c if c.isalnum() or c.isspace() else ' ' for c in string])
+        # Replace multiple spaces with single space, strip, then convert to lowercase with hyphens
+        kebab = '-'.join(cleaned.split()).lower()
+        return kebab
 
 def _print(var):
     return var
