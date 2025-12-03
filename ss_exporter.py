@@ -17,6 +17,7 @@ def html_to_markdown(html_content):
     
     h = html2text.HTML2Text()
     h.body_width = 0
+    h.mark_code = True
     
     markdown = h.handle(html_content)
     
@@ -30,8 +31,8 @@ def html_to_markdown(html_content):
     # Remove "Click to copy" text that follows code blocks
     markdown = re.sub(r'```\s*\n\s*Click to copy\s*\n', '```\n\n', markdown)
     
-    # Remove link wrapping around images: [ ![alt](image.png) ](<image.png>) -> ![alt](image.png)
-    markdown = re.sub(r'\[\s*(!\\[.*?\\]\\(.*?\\))\s*\\]\\(<.*?>\\)', r'\1', markdown)
+    # Remove link wrapping around images: [ ![alt](image.png) ](image.png) -> ![alt](image.png)
+    markdown = re.sub(r'\[\s*(!\[.*?\]\([^)]*\))\s*\]\([^)]*\)', r'\1', markdown)
     
     return markdown.strip()
 
@@ -451,6 +452,66 @@ def main(argv):
 
                     chapters = screensteps('sites/' + this_site_id + '/manuals/' + this_manual_id) # grab chapters
 
+                    # Create a mapping of article IDs to their file paths for link conversion
+                    article_id_to_path = {}
+                    # Store all article data for second pass processing
+                    articles_data = []
+
+                    print(">>> PASS 1: Fetching all articles and building link mapping...")
+                    
+                    # FIRST PASS: Build complete article ID to path mapping
+                    for chapter in chapters['manual']['chapters']:
+                        this_chapter_id = _decode(chapter['id'])
+                        print(">>>> Mapping chapter: " + _print(chapter['title']))
+                        
+                        # Determine chapter folder name
+                        if group_by_topic:
+                            if object_identifier == "title_id":
+                                chapter_folder_name = prepare_for_filename(chapter['title']) + " [" + this_chapter_id + "]"
+                            elif object_identifier == "title":
+                                chapter_folder_name = prepare_for_filename(chapter['title'])
+                            else:
+                                chapter_folder_name = this_chapter_id
+                        else:
+                            chapter_folder_name = ''
+                        
+                        articles = screensteps('sites/' + this_site_id + '/chapters/' + this_chapter_id)
+                        
+                        for article in articles['chapter']['articles']:
+                            this_article_id = _decode(article['id'])
+                            if (article_id == this_article_id) or (article_id == ''):
+                                this_article = screensteps('sites/' + this_site_id + '/articles/' + this_article_id)
+                                this_article_title = this_article['article']['title']
+                                
+                                if object_identifier == "title_id":
+                                    this_article_identifier = prepare_for_filename(this_article_title) + " [" + this_article_id + "]"
+                                elif object_identifier == "title":
+                                    this_article_identifier = prepare_for_filename(this_article_title)
+                                else:
+                                    this_article_identifier = this_article_id
+                                
+                                # Build the relative path for link mapping
+                                if group_by_topic:
+                                    article_relative_link = chapter_folder_name + '/' + this_article_identifier + '.md'
+                                else:
+                                    article_relative_link = this_article_identifier + '.md'
+                                
+                                article_id_to_path[this_article_id] = article_relative_link
+                                
+                                # Store article data for second pass
+                                articles_data.append({
+                                    'article': this_article,
+                                    'article_id': this_article_id,
+                                    'article_identifier': this_article_identifier,
+                                    'chapter_id': this_chapter_id,
+                                    'chapter_title': chapter['title'],
+                                    'chapter_folder_name': chapter_folder_name
+                                })
+                                
+                                print(">>>>> Mapped article: " + _print(article['title']) + " -> " + article_relative_link)
+                    
+                    print(">>> PASS 2: Creating files with corrected links...")
+
                     # pre-chapter replaces on _decode(manual_files_ref[path][0])
                     if is_manual_files: # are there templates?
                         manual_files_temp = {}
@@ -458,6 +519,8 @@ def main(argv):
                             manual_files_temp[path] = []
                             manual_files_temp[path].append(_decode(manual_files_ref[path][0]).replace('{{title}}', chapters['manual']['title']))
 
+                    # SECOND PASS: Process chapters and create files with correct links
+                    # SECOND PASS: Process chapters and create files with correct links
                     # loop through chapters
                     for chapter in chapters['manual']['chapters']:
                         this_chapter_id = _decode(chapter['id'])
@@ -485,25 +548,16 @@ def main(argv):
                             for path, details in manual_files.items():
                                 manual_files_temp[path].append(_decode(manual_files_ref[path][1]).replace('{{title}}', chapter['title']))
 
-                        articles = screensteps('sites/' + this_site_id + '/chapters/' + this_chapter_id) # grab articles
-
-                        # loop through articles
-                        for article in articles['chapter']['articles']:
-                            this_article_id = _decode(article['id'])
+                        # Process articles for this chapter from stored data
+                        chapter_articles = [a for a in articles_data if a['chapter_id'] == this_chapter_id]
+                        
+                        for article_data in chapter_articles:
+                            this_article = article_data['article']
+                            this_article_id = article_data['article_id']
+                            this_article_identifier = article_data['article_identifier']
+                            
                             if (article_id == this_article_id) or (article_id == ''): # only action an article if article_id isn't set, or is a match
-                                print(">>>>> Processing article: " + _print(article['title']))
-                                # print(">>>>> " + _print(article))
-
-                                this_article = screensteps('sites/' + this_site_id + '/articles/' + this_article_id) # grab ind article
-
-                                this_article_title = this_article['article']['title']
-
-                                if object_identifier == "title_id":
-                                    this_article_identifier = prepare_for_filename(this_article_title) + " [" + this_article_id + "]"
-                                elif object_identifier == "title":
-                                    this_article_identifier = prepare_for_filename(this_article_title)
-                                else:
-                                    this_article_identifier = this_article_id
+                                print(">>>>> Processing article: " + _print(this_article['article']['title']))
 
                                 # Determine base folder for articles (chapter folder if grouping by topic, otherwise site folder)
                                 base_folder = chapter_folder if group_by_topic else site_folder
@@ -525,6 +579,27 @@ def main(argv):
                                 # Convert HTML to Markdown
                                 article_html = this_article['article']['html_body']
                                 article_markdown = html_to_markdown(article_html)
+                                
+                                # Convert internal ScreenSteps links to markdown file references using complete mapping
+                                # Pattern: https://docs.sharinpix.com/m/documentation/l/ARTICLE_ID or ../../documentation/l/ARTICLE_ID
+                                for art_id, art_path in article_id_to_path.items():
+                                    # Handle both full URLs and relative paths
+                                    article_markdown = re.sub(
+                                        r'https?://[^/]+/m/documentation/l/' + re.escape(art_id) + r'[^)]*',
+                                        art_path if not group_by_topic else '../' + art_path,
+                                        article_markdown
+                                    )
+                                    article_markdown = re.sub(
+                                        r'\.\./\.\./documentation/l/' + re.escape(art_id) + r'[^)]*',
+                                        art_path if not group_by_topic else '../' + art_path,
+                                        article_markdown
+                                    )
+                                    # Also handle /m/documentation/l/ paths
+                                    article_markdown = re.sub(
+                                        r'/m/documentation/l/' + re.escape(art_id) + r'[^)]*',
+                                        art_path if not group_by_topic else '../' + art_path,
+                                        article_markdown
+                                    )
 
                                 # loop through attached files
                                 this_articles_files = []
