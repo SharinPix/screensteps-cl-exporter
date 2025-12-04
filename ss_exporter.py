@@ -214,10 +214,13 @@ def get_chapter_path_with_nesting(chapter_title):
         if 'sharinpix features' in chapter_lower:
             # Extract the subcategory part after the dash
             if ' - ' in chapter_title:
-                parts = chapter_title.split(' - ', 1)
-                parent = prepare_for_filename(parts[0])  # sharinpix-features
-                child = prepare_for_filename(parts[1])   # the subcategory
+                # Keep the full chapter name for the subfolder
+                parent = 'sharinpix-features'
+                child = prepare_for_filename(chapter_title)  # Full name including "sharinpix-features-..."
                 return parent + '/' + child
+            else:
+                # Just "SharinPix Features" without subcategory
+                return prepare_for_filename(chapter_title)
         
         return prepare_for_filename(chapter_title)
 
