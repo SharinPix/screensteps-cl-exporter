@@ -17,27 +17,29 @@ def html_to_markdown(html_content):
     
     h = html2text.HTML2Text()
     h.body_width = 0
-    h.ignore_links = False
-    h.ignore_images = False
-    h.ignore_emphasis = False
-    h.skip_internal_links = False
-    h.inline_links = True
-    h.protect_links = True
-    h.wrap_links = False
-    h.unicode_snob = True
     h.mark_code = True
-    h.default_image_alt = ''
     
     markdown = h.handle(html_content)
     
     import re
     markdown = re.sub(r'\n{3,}', '\n\n', markdown)
     
+    # Convert [code] tags to proper markdown code blocks
+    markdown = re.sub(r'\[code\]\s*\n', '```\n', markdown)
+    markdown = re.sub(r'\n\s*\[/code\]', '\n```', markdown)
+    
+    # Remove "Click to copy" text that follows code blocks
+    markdown = re.sub(r'```\s*\n\s*Click to copy\s*\n', '```\n\n', markdown)
+    
+    # Remove link wrapping around images: [ ![alt](image.png) ](image.png) -> ![alt](image.png)
+    markdown = re.sub(r'\[\s*(!\[.*?\]\([^)]*\))\s*\]\([^)]*\)', r'\1', markdown)
+    
     return markdown.strip()
 
 # globals
 article_file_indicator = '@article.*'
 manual_file_indicator = '@toc.*'
+summary_file_indicator = 'SUMMARY.*'
 image_folder_indicator = '@images'
 attach_folder_indicator = '@attachments'
 
@@ -186,7 +188,70 @@ def _decode(var):
     return str(var)
 
 def prepare_for_filename(string):
-        return "".join([c for c in string if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+        # Convert to lowercase and replace spaces/special chars with hyphens (kebab-case)
+        # Remove special characters, keep only alphanumeric and spaces
+        cleaned = "".join([c if c.isalnum() or c.isspace() else ' ' for c in string])
+        # Replace multiple spaces with single space, strip, then convert to lowercase with hyphens
+        kebab = '-'.join(cleaned.split()).lower()
+        return kebab
+
+def get_manual_parent_folder(manual_title):
+        """Determine the parent folder based on manual name"""
+        manual_lower = manual_title.lower()
+        
+        # Resources manuals
+        if 'faq' in manual_lower or 'release' in manual_lower or 'misc' in manual_lower:
+            return 'resources'
+        # Everything else goes to documentations
+        else:
+            return 'documentations'
+
+def get_chapter_path_with_nesting(chapter_title):
+        """Determine if a chapter should be nested and return the path"""
+        chapter_lower = chapter_title.lower()
+        
+        # SharinPix Features subcategories should be nested
+        if 'sharinpix features' in chapter_lower:
+            # Extract the subcategory part after the dash
+            if ' - ' in chapter_title:
+                # Keep the full chapter name for the subfolder
+                parent = 'sharinpix-features'
+                child = prepare_for_filename(chapter_title)  # Full name including "sharinpix-features-..."
+                return parent + '/' + child
+            else:
+                # Just "SharinPix Features" without subcategory
+                return prepare_for_filename(chapter_title)
+        
+        return prepare_for_filename(chapter_title)
+
+def calculate_relative_path(from_path, to_path):
+        """Calculate relative path from one article to another"""
+        # Split paths into parts
+        from_parts = from_path.split('/')
+        to_parts = to_path.split('/')
+        
+        # Remove filename from from_path (keep only directory parts)
+        from_dir_parts = from_parts[:-1]
+        
+        # Find common prefix
+        common_length = 0
+        for i in range(min(len(from_dir_parts), len(to_parts) - 1)):
+            if from_dir_parts[i] == to_parts[i]:
+                common_length += 1
+            else:
+                break
+        
+        # Calculate how many levels to go up
+        levels_up = len(from_dir_parts) - common_length
+        
+        # Build the relative path
+        if levels_up > 0:
+            relative = '../' * levels_up + '/'.join(to_parts[common_length:])
+        else:
+            # Same directory or subdirectory
+            relative = '/'.join(to_parts[common_length:])
+        
+        return relative
 
 def _print(var):
     return var
@@ -322,12 +387,18 @@ def main(argv):
 
             # now let's check if theres a manual file
             at_manual_file = find_file(manual_file_indicator,template_folder)
+            at_summary_file = find_file(summary_file_indicator,template_folder)
 
-            if at_manual_file == []:
-                print("Warn: No @toc file found.")
+            if at_manual_file == [] and at_summary_file == []:
+                print("Warn: No @toc or SUMMARY file found.")
                 is_manual_files = False
             else:
-                print("Info: @toc file(s) found.")
+                # Prefer SUMMARY file if both exist
+                if at_summary_file != []:
+                    print("Info: SUMMARY file(s) found (GitBook format).")
+                    at_manual_file = at_summary_file
+                else:
+                    print("Info: @toc file(s) found.")
                 is_manual_files = True
 
                 # read in template data
@@ -439,6 +510,70 @@ def main(argv):
 
                     chapters = screensteps('sites/' + this_site_id + '/manuals/' + this_manual_id) # grab chapters
 
+                    # Determine parent folder for this manual's chapters
+                    manual_parent_folder = get_manual_parent_folder(manual['title'])
+
+                    # Create a mapping of article IDs to their file paths for link conversion
+                    article_id_to_path = {}
+                    # Store all article data for second pass processing
+                    articles_data = []
+
+                    print(">>> PASS 1: Fetching all articles and building link mapping...")
+                    print(">>>> Manual parent folder: " + manual_parent_folder)
+                    
+                    # FIRST PASS: Build complete article ID to path mapping
+                    for chapter in chapters['manual']['chapters']:
+                        this_chapter_id = _decode(chapter['id'])
+                        print(">>>> Mapping chapter: " + _print(chapter['title']))
+                        
+                        # Determine chapter folder name with potential nesting
+                        if group_by_topic:
+                            chapter_path = get_chapter_path_with_nesting(chapter['title'])
+                            if object_identifier == "title_id":
+                                chapter_path = chapter_path + "-" + this_chapter_id
+                            
+                            # Full path includes manual parent folder
+                            chapter_folder_name = manual_parent_folder + '/' + chapter_path
+                        else:
+                            chapter_folder_name = ''
+                        
+                        articles = screensteps('sites/' + this_site_id + '/chapters/' + this_chapter_id)
+                        
+                        for article in articles['chapter']['articles']:
+                            this_article_id = _decode(article['id'])
+                            if (article_id == this_article_id) or (article_id == ''):
+                                this_article = screensteps('sites/' + this_site_id + '/articles/' + this_article_id)
+                                this_article_title = this_article['article']['title']
+                                
+                                if object_identifier == "title_id":
+                                    this_article_identifier = prepare_for_filename(this_article_title) + " [" + this_article_id + "]"
+                                elif object_identifier == "title":
+                                    this_article_identifier = prepare_for_filename(this_article_title)
+                                else:
+                                    this_article_identifier = this_article_id
+                                
+                                # Build the relative path for link mapping
+                                if group_by_topic:
+                                    article_relative_link = chapter_folder_name + '/' + this_article_identifier + '.md'
+                                else:
+                                    article_relative_link = this_article_identifier + '.md'
+                                
+                                article_id_to_path[this_article_id] = article_relative_link
+                                
+                                # Store article data for second pass
+                                articles_data.append({
+                                    'article': this_article,
+                                    'article_id': this_article_id,
+                                    'article_identifier': this_article_identifier,
+                                    'chapter_id': this_chapter_id,
+                                    'chapter_title': chapter['title'],
+                                    'chapter_folder_name': chapter_folder_name
+                                })
+                                
+                                print(">>>>> Mapped article: " + _print(article['title']) + " -> " + article_relative_link)
+                    
+                    print(">>> PASS 2: Creating files with corrected links...")
+
                     # pre-chapter replaces on _decode(manual_files_ref[path][0])
                     if is_manual_files: # are there templates?
                         manual_files_temp = {}
@@ -446,6 +581,7 @@ def main(argv):
                             manual_files_temp[path] = []
                             manual_files_temp[path].append(_decode(manual_files_ref[path][0]).replace('{{title}}', chapters['manual']['title']))
 
+                    # SECOND PASS: Process chapters and create files with correct links
                     # loop through chapters
                     for chapter in chapters['manual']['chapters']:
                         this_chapter_id = _decode(chapter['id'])
@@ -454,12 +590,13 @@ def main(argv):
 
                         # Create chapter folder if grouping by topic
                         if group_by_topic:
+                            # Use the same logic as first pass for consistency
+                            chapter_path = get_chapter_path_with_nesting(chapter['title'])
                             if object_identifier == "title_id":
-                                chapter_folder_name = prepare_for_filename(chapter['title']) + " [" + this_chapter_id + "]"
-                            elif object_identifier == "title":
-                                chapter_folder_name = prepare_for_filename(chapter['title'])
-                            else:
-                                chapter_folder_name = this_chapter_id
+                                chapter_path = chapter_path + "-" + this_chapter_id
+                            
+                            # Full path includes manual parent folder
+                            chapter_folder_name = manual_parent_folder + '/' + chapter_path
                             
                             chapter_folder = os.path.join(site_folder, chapter_folder_name)
                             make_dir(chapter_folder)
@@ -473,30 +610,25 @@ def main(argv):
                             for path, details in manual_files.items():
                                 manual_files_temp[path].append(_decode(manual_files_ref[path][1]).replace('{{title}}', chapter['title']))
 
-                        articles = screensteps('sites/' + this_site_id + '/chapters/' + this_chapter_id) # grab articles
-
-                        # loop through articles
-                        for article in articles['chapter']['articles']:
-                            this_article_id = _decode(article['id'])
+                        # Process articles for this chapter from stored data
+                        chapter_articles = [a for a in articles_data if a['chapter_id'] == this_chapter_id]
+                        
+                        for article_data in chapter_articles:
+                            this_article = article_data['article']
+                            this_article_id = article_data['article_id']
+                            this_article_identifier = article_data['article_identifier']
+                            
                             if (article_id == this_article_id) or (article_id == ''): # only action an article if article_id isn't set, or is a match
-                                print(">>>>> Processing article: " + _print(article['title']))
-                                # print(">>>>> " + _print(article))
-
-                                this_article = screensteps('sites/' + this_site_id + '/articles/' + this_article_id) # grab ind article
-
-                                this_article_title = this_article['article']['title']
-
-                                if object_identifier == "title_id":
-                                    this_article_identifier = prepare_for_filename(this_article_title) + " [" + this_article_id + "]"
-                                elif object_identifier == "title":
-                                    this_article_identifier = prepare_for_filename(this_article_title)
-                                else:
-                                    this_article_identifier = this_article_id
+                                print(">>>>> Processing article: " + _print(this_article['article']['title']))
 
                                 # Determine base folder for articles (chapter folder if grouping by topic, otherwise site folder)
                                 base_folder = chapter_folder if group_by_topic else site_folder
                                 
-                                if is_article_folder:
+                                # For GitBook structure with -g flag, don't create article subfolders
+                                if group_by_topic:
+                                    # Articles go directly in chapter folder for GitBook
+                                    article_folder = base_folder
+                                elif is_article_folder:
                                     article_folder = os.path.join(base_folder, find_relative_path(at_article_folder,template_folder), this_article_identifier)
                                     copy_and_overwrite(at_article_folder, article_folder)
                                 else:
@@ -509,6 +641,39 @@ def main(argv):
                                 # Convert HTML to Markdown
                                 article_html = this_article['article']['html_body']
                                 article_markdown = html_to_markdown(article_html)
+                                
+                                # Get current article's full path for calculating relative links
+                                current_article_path = article_id_to_path[this_article_id]
+                                
+                                # Convert internal ScreenSteps links to markdown file references using complete mapping
+                                # Pattern: https://docs.sharinpix.com/m/documentation/l/ARTICLE_ID or ../../documentation/l/ARTICLE_ID
+                                for art_id, art_path in article_id_to_path.items():
+                                    if art_id == this_article_id:
+                                        continue  # Skip self-references
+                                    
+                                    # Calculate proper relative path from current article to target article
+                                    if group_by_topic:
+                                        relative_link = calculate_relative_path(current_article_path, art_path)
+                                    else:
+                                        relative_link = art_path
+                                    
+                                    # Handle both full URLs and relative paths
+                                    article_markdown = re.sub(
+                                        r'https?://[^/]+/m/documentation/l/' + re.escape(art_id) + r'[^)]*',
+                                        relative_link,
+                                        article_markdown
+                                    )
+                                    article_markdown = re.sub(
+                                        r'\.\./\.\./documentation/l/' + re.escape(art_id) + r'[^)]*',
+                                        relative_link,
+                                        article_markdown
+                                    )
+                                    # Also handle /m/documentation/l/ paths
+                                    article_markdown = re.sub(
+                                        r'/m/documentation/l/' + re.escape(art_id) + r'[^)]*',
+                                        relative_link,
+                                        article_markdown
+                                    )
 
                                 # loop through attached files
                                 this_articles_files = []
@@ -518,7 +683,12 @@ def main(argv):
                                         # what type of file is it?
                                         download_ext = os.path.splitext(urlparse(content_block['url']).path)[1]
                                         if content_block['type'] == 'AttachmentContent': # attachment
-                                            if is_attach_folder:
+                                            if group_by_topic:
+                                                # GitBook: attachments at chapter level in .gitbook/assets
+                                                files_folder = os.path.join(base_folder, '.gitbook', 'assets')
+                                                short_files_folder = '.gitbook/assets'
+                                                make_dir(files_folder)
+                                            elif is_attach_folder:
                                                 files_folder = os.path.join(base_folder,at_attach_folder)
                                                 short_files_folder = at_attach_folder
                                                 if '@article' in files_folder:
@@ -529,7 +699,12 @@ def main(argv):
                                                 short_files_folder = 'attachments'
                                                 make_dir(files_folder)
                                         else: # image
-                                            if is_image_folder:
+                                            if group_by_topic:
+                                                # GitBook: images at chapter level in .gitbook/assets
+                                                files_folder = os.path.join(base_folder, '.gitbook', 'assets')
+                                                short_files_folder = '.gitbook/assets'
+                                                make_dir(files_folder)
+                                            elif is_image_folder:
                                                 files_folder = os.path.join(base_folder,at_images_folder)
                                                 short_files_folder = at_images_folder
                                                 if '@article' in files_folder:
@@ -552,7 +727,13 @@ def main(argv):
                                         back_dir = ''
                                         article_relative_path = find_relative_path(path,template_folder)
                                         temp_filename = this_article_identifier + os.path.splitext(path)[1]
-                                        if article_relative_path != '':
+                                        
+                                        # For GitBook with -g flag, articles go directly in chapter folder
+                                        if group_by_topic:
+                                            # No subdirectory for articles in GitBook structure
+                                            temp_filename = this_article_identifier + os.path.splitext(path)[1]
+                                            back_dir = ''
+                                        elif article_relative_path != '':
                                             article_relative_path = article_relative_path.replace("@article", this_article_identifier)
                                             temp_filename = os.path.join(article_relative_path,temp_filename)
                                             back_dir = '../' * len(split_path(article_relative_path))
@@ -631,6 +812,7 @@ def main(argv):
                 try:
                     remove_found_files(find_file(article_file_indicator,site_folder))
                     remove_found_files(find_file(manual_file_indicator,site_folder))
+                    remove_found_files(find_file(summary_file_indicator,site_folder))
                     remove_found_files(find_file(image_folder_indicator,site_folder))
                     remove_found_files(find_file(attach_folder_indicator,site_folder))
                     remove_directories(find_dirs("@article", site_folder))
